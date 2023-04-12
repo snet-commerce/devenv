@@ -1,0 +1,69 @@
+version: '3'
+
+services:
+  zipkin-elasticsearch:
+    image: "ghcr.io/openzipkin/zipkin-elasticsearch7:latest"
+    ports:
+      - "9200:9200"
+
+  zipkin:
+    image: "ghcr.io/openzipkin/zipkin:latest"
+    environment:
+      - STORAGE_TYPE=elasticsearch
+      - ES_HOSTS=zipkin-elasticsearch:9200
+      - QUERY_LOG_LEVEL=${QUERY_LOG_LEVEL}
+      - QUERY_TIMEOUT=${QUERY_TIMEOUT}
+      - QUERY_PORT=${QUERY_PORT}
+    depends_on:
+      - zipkin-elasticsearch
+    ports:
+      - "${QUERY_PORT}:9411"
+
+  merchant-srv:
+    build:
+      context: ./merchant
+    environment:
+      - SERVICE_NAME=${MERCHANT_SERVICE_NAME}
+      - SERVER_PORT=${MERCHANT_SERVER_PORT}
+      - ENV=${ENV}
+      - POSTGRES_URL=postgres://${MERCHANT_POSTGRES_USER}:${MERCHANT_POSTGRES_PASSWORD}@merchant-db:5432/${MERCHANT_POSTGRES_DB}?sslmode=disable
+      - ZIPKIN_TRACER_URL=${ZIPKIN_TRACER_URL}
+      - ZIPKIN_TRACER_RATIO=${ZIPKIN_TRACER_RATIO}
+    restart: no
+    depends_on:
+      merchant-db:
+        condition: "service_healthy"
+      atlas-migrations:
+        condition: "service_completed_successfully"
+      zipkin:
+        condition: "service_started"
+    ports:
+      - "${MERCHANT_SERVER_PORT}"
+
+  merchant-db:
+    image: "postgres:latest"
+    environment:
+      - POSTGRES_USER=${MERCHANT_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${MERCHANT_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${MERCHANT_POSTGRES_DB}
+    ports:
+      - "5432:5432"
+    volumes:
+      - merchant-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 3s
+      timeout: 10s
+      retries: 3
+
+  atlas-migrations:
+    image: "arigaio/atlas:latest"
+    volumes:
+      - ./merchant/migrations:/migrations
+    depends_on:
+      merchants-db:
+        condition: "service_healthy"
+    command: migrate apply --dir file://migrations --url postgres://${MERCHANT_POSTGRES_USER}:${MERCHANT_POSTGRES_PASSWORD}@merchants-db:5432/${MERCHANT_POSTGRES_DB}?sslmode=disable
+
+volumes:
+  merchant-data:

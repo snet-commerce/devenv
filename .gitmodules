@@ -1,0 +1,4 @@
+[submodule "merchant"]
+	path = merchant
+	url = https://github.com/snet-commerce/merchant.git
+	branch = develop
